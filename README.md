@@ -1,8 +1,6 @@
 # 🚦 Xây dựng Web Server cho Hệ thống Dự đoán Ùn tắc Giao thông bằng Trí tuệ Nhân tạo (AI)
 
 > **AI-Powered Urban Traffic Prediction & Management Platform**  
-> Phiên bản: `1.0` &nbsp;|&nbsp; Năm: `2025`
-
 ---
 
 ## 📑 Mục lục
@@ -308,6 +306,6 @@ Tuần 11-12 ████████████  Triển khai Docker, CI/CD, t
 
 **🚦 AI Traffic Prediction Platform · Version 1.0 · 2025**
 
-*Xây dựng bởi — Web Server cho Hệ thống Dự đoán Ùn tắc Giao thông bằng AI*
+*Xây dựng bởi Mạnh Hiếu với đề tài Web Server "Hệ thống Dự đoán Ùn tắc Giao thông bằng AI"*
 
 </div>
