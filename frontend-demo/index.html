@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="ITS AI - Hệ thống Dự đoán Ùn tắc Giao thông Hà Nội bằng Trí tuệ Nhân tạo">
+    <title>ITS AI | Hệ thống Giao thông Thông minh Hà Nội</title>
+
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- Toast Notification Container -->
+<div id="toast-container"></div>
+
+<div class="app-container">
+
+    <!-- ===== SIDEBAR ===== -->
+    <aside class="sidebar glass-panel">
+        <div class="brand">
+            <i class="fa-solid fa-traffic-light brand-icon"></i>
+            <div class="brand-text">
+                <h1>ITS AI</h1>
+                <span>Traffic Platform v1.0</span>
+            </div>
+        </div>
+
+        <nav class="nav-menu" id="main-nav">
+            <div class="nav-section-label">CHÍNH</div>
+            <a href="#" class="nav-item active" data-target="view-map">
+                <i class="fa-solid fa-map-location-dot"></i>
+                <span>Bản đồ thời gian thực</span>
+            </a>
+            <a href="#" class="nav-item" data-target="view-dashboard">
+                <i class="fa-solid fa-chart-line"></i>
+                <span>Dashboard AI</span>
+            </a>
+            <a href="#" class="nav-item" data-target="view-alerts">
+                <i class="fa-solid fa-bell"></i>
+                <span>Cảnh báo sự cố</span>
+                <span class="nav-badge" id="nav-alert-count">3</span>
+            </a>
+            <div class="nav-section-label">PHÂN TÍCH</div>
+            <a href="#" class="nav-item" data-target="view-history">
+                <i class="fa-solid fa-clock-rotate-left"></i>
+                <span>Dữ liệu lịch sử</span>
+            </a>
+            <a href="#" class="nav-item" data-target="view-settings">
+                <i class="fa-solid fa-gear"></i>
+                <span>Cấu hình hệ thống</span>
+            </a>
+        </nav>
+
+        <div class="system-status">
+            <div class="status-indicator">
+                <span class="dot pulse"></span>
+                <span>AI Engine đang chạy</span>
+            </div>
+            <div class="status-sub">
+                <span id="road-count-sidebar">0</span> tuyến đường · Cập nhật: <span id="time-display">--:--:--</span>
+            </div>
+        </div>
+    </aside>
+
+    <!-- ===== MAIN CONTENT ===== -->
+    <main class="main-content">
+
+        <!-- Top Bar -->
+        <header class="top-bar glass-panel">
+            <div class="search-box">
+                <i class="fa-solid fa-magnifying-glass"></i>
+                <input type="text" id="road-search" placeholder="Tìm kiếm tuyến đường, quận...">
+                <button class="search-clear" id="search-clear" style="display:none">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+
+            <div class="filter-bar" id="map-filters" style="display:flex;">
+                <!-- Lọc loại đường -->
+                <div class="filter-group">
+                    <label>Loại đường:</label>
+                    <div class="filter-pills" id="type-filters">
+                        <button class="pill active" data-filter-type="all">Tất cả</button>
+                        <button class="pill" data-filter-type="highway">Cao tốc</button>
+                        <button class="pill" data-filter-type="bridge">Cầu</button>
+                        <button class="pill" data-filter-type="ring">Vành đai</button>
+                        <button class="pill" data-filter-type="main">Đường chính</button>
+                    </div>
+                </div>
+                <!-- Lọc trạng thái -->
+                <div class="filter-group">
+                    <label>Trạng thái:</label>
+                    <div class="filter-pills" id="status-filters">
+                        <button class="pill active" data-filter-status="all">Tất cả</button>
+                        <button class="pill status-clear" data-filter-status="clear">Thông</button>
+                        <button class="pill status-slow" data-filter-status="slow">Chậm</button>
+                        <button class="pill status-jam" data-filter-status="jam">Ùn tắc</button>
+                        <button class="pill status-severe" data-filter-status="severe">Nghẽn</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="user-actions">
+                <div class="action-btn" id="weather-toggle" title="Kích hoạt thời tiết xấu (Mưa bão)">
+                    <i class="fa-solid fa-cloud-showers-heavy"></i>
+                </div>
+                <div class="action-btn" id="theme-toggle" title="Đổi giao diện">
+                    <i class="fa-solid fa-moon"></i>
+                </div>
+                <div class="action-btn" id="btn-simulate" title="Bật/tắt mô phỏng xe chạy">
+                    <i class="fa-solid fa-car-side"></i>
+                </div>
+                <div class="user-profile">
+                    <img src="https://ui-avatars.com/api/?name=Admin&background=0ea5e9&color=fff" alt="Admin">
+                    <span>Admin</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- ================= VIEW 1: MAP ================= -->
+        <div id="view-map" class="app-view active">
+            <!-- Rain Overlay -->
+            <div id="rain-overlay" class="rain-overlay"></div>
+            
+            <div class="dashboard-grid">
+                <!-- LEFT: Map Column -->
+                <div class="map-column">
+                    <!-- Stats Row -->
+                    <div class="stats-row">
+                        <div class="stat-card">
+                            <div class="stat-icon"><i class="fa-solid fa-road"></i></div>
+                            <div>
+                                <div class="stat-value" id="stat-total">0</div>
+                                <div class="stat-label">Tổng tuyến đường</div>
+                            </div>
+                        </div>
+                        <div class="stat-card danger">
+                            <div class="stat-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                            <div>
+                                <div class="stat-value" id="stat-jam">0</div>
+                                <div class="stat-label">Đang ùn tắc / nghẽn</div>
+                            </div>
+                        </div>
+                        <div class="stat-card success">
+                            <div class="stat-icon"><i class="fa-solid fa-circle-check"></i></div>
+                            <div>
+                                <div class="stat-value" id="stat-clear">0</div>
+                                <div class="stat-label">Thông thoáng</div>
+                            </div>
+                        </div>
+                        <div class="stat-card accent">
+                            <div class="stat-icon"><i class="fa-solid fa-brain"></i></div>
+                            <div>
+                                <div class="stat-value" id="stat-accuracy">91.4%</div>
+                                <div class="stat-label">Độ chính xác AI</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Map Panel -->
+                    <div class="map-panel glass-panel">
+                        <div class="map-header">
+                            <h2><i class="fa-solid fa-map"></i> Bản đồ Giao thông Hà Nội</h2>
+                            <div class="map-legend">
+                                <span class="legend-dot clear"></span>Thông
+                                <span class="legend-dot slow"></span>Chậm
+                                <span class="legend-dot jam"></span>Ùn tắc
+                                <span class="legend-dot severe"></span>Nghẽn
+                            </div>
+                            <div class="map-btn-group">
+                                <button class="map-btn active" id="btn-show-hotspots" title="Điểm nóng">
+                                    <i class="fa-solid fa-fire"></i>
+                                </button>
+                                <button class="map-btn" id="btn-recenter" title="Về trung tâm">
+                                    <i class="fa-solid fa-crosshairs"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="traffic-map" class="map-view"></div>
+
+                        <!-- Road Info Panel (hiện khi click đường) -->
+                        <div class="road-info-panel glass-panel" id="road-info" style="display:none">
+                            <button class="close-info" id="close-road-info"><i class="fa-solid fa-xmark"></i></button>
+                            <div class="road-info-header">
+                                <div class="road-info-name" id="info-name">--</div>
+                                <div class="road-info-badge" id="info-status-badge">--</div>
+                            </div>
+                            <div class="road-info-grid">
+                                <div class="info-item">
+                                    <i class="fa-solid fa-map-pin"></i>
+                                    <div><div class="info-val" id="info-district">--</div><div class="info-lbl">Quận/Huyện</div></div>
+                                </div>
+                                <div class="info-item">
+                                    <i class="fa-solid fa-gauge-high"></i>
+                                    <div><div class="info-val" id="info-speed">-- km/h</div><div class="info-lbl">Tốc độ hiện tại</div></div>
+                                </div>
+                                <div class="info-item">
+                                    <i class="fa-solid fa-car"></i>
+                                    <div><div class="info-val" id="info-density">-- xe/phút</div><div class="info-lbl">Lưu lượng</div></div>
+                                </div>
+                                <div class="info-item">
+                                    <i class="fa-solid fa-road"></i>
+                                    <div><div class="info-val" id="info-lanes">-- làn</div><div class="info-lbl">Số làn xe</div></div>
+                                </div>
+                                <div class="info-item">
+                                    <i class="fa-solid fa-brain"></i>
+                                    <div><div class="info-val" id="info-ai-pred">--</div><div class="info-lbl">AI dự đoán 30 phút</div></div>
+                                </div>
+                                <div class="info-item">
+                                    <i class="fa-solid fa-ruler-horizontal"></i>
+                                    <div><div class="info-val" id="info-length">-- km</div><div class="info-lbl">Chiều dài</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- RIGHT: Side Panels -->
+                <div class="side-panels">
+                    <!-- AI Prediction Chart -->
+                    <div class="panel glass-panel">
+                        <div class="panel-head">
+                            <h3><i class="fa-solid fa-waveform-lines"></i> Dự đoán AI · 30 phút tới</h3>
+                            <span class="live-badge"><span class="dot pulse"></span> LIVE</span>
+                        </div>
+                        <canvas id="predictionChart" height="130"></canvas>
+                    </div>
+
+                    <!-- Road List -->
+                    <div class="panel glass-panel road-list-panel">
+                        <div class="panel-head">
+                            <h3><i class="fa-solid fa-list-ul"></i> Danh sách tuyến đường</h3>
+                            <span id="visible-count" class="count-badge">0 tuyến</span>
+                        </div>
+                        <ul class="road-list" id="road-list"></ul>
+                    </div>
+
+                    <!-- Recent Alerts -->
+                    <div class="panel glass-panel" style="max-height: 250px; overflow-y: auto;">
+                        <div class="panel-head">
+                            <h3><i class="fa-solid fa-triangle-exclamation"></i> Cảnh báo gần đây</h3>
+                        </div>
+                        <ul class="alert-list" id="alert-list"></ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= VIEW 2: DASHBOARD AI ================= -->
+        <div id="view-dashboard" class="app-view" style="display:none">
+            <div class="page-header">
+                <h2>Phân tích & Thống kê AI</h2>
+                <p>Số liệu tổng hợp toàn thành phố từ mô hình Machine Learning</p>
+            </div>
+            
+            <div class="grid-layout-2-1">
+                <div class="panel glass-panel p-4">
+                    <h3><i class="fa-solid fa-chart-area"></i> Xu hướng lưu lượng giao thông 24h</h3>
+                    <div class="chart-wrapper large">
+                        <canvas id="chart-24h"></canvas>
+                    </div>
+                </div>
+                <div class="panel glass-panel p-4">
+                    <h3><i class="fa-solid fa-chart-pie"></i> Tỉ lệ trạng thái</h3>
+                    <div class="chart-wrapper medium">
+                        <canvas id="chart-pie"></canvas>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="grid-layout-3">
+                <div class="panel glass-panel p-4">
+                    <h3><i class="fa-solid fa-ranking-star"></i> Top 5 đường ùn tắc nhất</h3>
+                    <div class="chart-wrapper small">
+                        <canvas id="chart-bar"></canvas>
+                    </div>
+                </div>
+                <div class="panel glass-panel p-4">
+                    <h3><i class="fa-solid fa-microchip"></i> Hiệu suất Mô hình AI (LSTM)</h3>
+                    <ul class="metrics-list">
+                        <li><span>F1-Score</span><strong class="text-accent">0.914</strong></li>
+                        <li><span>Precision</span><strong>0.892</strong></li>
+                        <li><span>Recall</span><strong>0.935</strong></li>
+                        <li><span>Mean Absolute Error</span><strong>4.2 xe/phút</strong></li>
+                        <li><span>Training time</span><strong>2h 14m (Hôm qua)</strong></li>
+                    </ul>
+                </div>
+                <div class="panel glass-panel p-4">
+                    <h3><i class="fa-solid fa-server"></i> Server Metrics</h3>
+                    <ul class="metrics-list">
+                        <li><span>API Response Time</span><strong class="text-success">45ms</strong></li>
+                        <li><span>WebSocket Clients</span><strong>1,245</strong></li>
+                        <li><span>Kafka Streams</span><strong class="text-accent">12k msg/s</strong></li>
+                        <li><span>Redis Cache Hit</span><strong>98.5%</strong></li>
+                        <li><span>CPU Usage</span><strong class="text-warning">62%</strong></li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- ================= VIEW 3: ALERTS ================= -->
+        <div id="view-alerts" class="app-view" style="display:none">
+            <div class="page-header">
+                <h2>Cảnh báo sự cố</h2>
+                <div class="flex-row" style="margin-top:10px; gap:10px;">
+                    <button class="btn btn-outline active">Tất cả</button>
+                    <button class="btn btn-outline">Chưa xử lý</button>
+                    <button class="btn btn-outline">Đã giải quyết</button>
+                </div>
+            </div>
+            <div class="panel glass-panel" style="padding:0">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Thời gian</th>
+                            <th>Mức độ</th>
+                            <th>Tuyến đường</th>
+                            <th>Chi tiết sự cố</th>
+                            <th>Nguồn báo cáo</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alerts-table-body">
+                        <!-- Render via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ================= VIEW 4: HISTORY ================= -->
+        <div id="view-history" class="app-view" style="display:none">
+            <div class="page-header">
+                <h2>Dữ liệu giao thông lịch sử</h2>
+                <div class="flex-row" style="margin-top:10px; gap:10px;">
+                    <input type="date" class="form-input" value="2025-06-01">
+                    <select class="form-input">
+                        <option>Tất cả tuyến đường</option>
+                        <option>Vành Đai 3</option>
+                        <option>Nguyễn Trãi</option>
+                    </select>
+                    <button class="btn btn-primary"><i class="fa-solid fa-download"></i> Xuất Excel</button>
+                </div>
+            </div>
+            <div class="panel glass-panel" style="padding:0">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Khung giờ</th>
+                            <th>Tuyến đường</th>
+                            <th>Vận tốc TB (km/h)</th>
+                            <th>Lưu lượng (xe/p)</th>
+                            <th>Chỉ số ùn tắc</th>
+                        </tr>
+                    </thead>
+                    <tbody id="history-table-body">
+                        <!-- Render via JS -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- ================= VIEW 5: SETTINGS ================= -->
+        <div id="view-settings" class="app-view" style="display:none">
+            <div class="page-header">
+                <h2>Cấu hình Hệ thống</h2>
+            </div>
+            <div class="grid-layout-2">
+                <div class="panel glass-panel p-4 form-section">
+                    <h3><i class="fa-solid fa-brain"></i> Tham số Mô hình AI</h3>
+                    
+                    <div class="form-group">
+                        <label>Ngưỡng cảnh báo (Confidence Threshold)</label>
+                        <input type="range" class="range-slider" min="0" max="100" value="85">
+                        <div style="text-align:right; font-size:12px; color:var(--text-3)">85%</div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Chu kỳ tái huấn luyện (Retrain Interval)</label>
+                        <select class="form-input">
+                            <option>Mỗi 12 giờ</option>
+                            <option selected>Mỗi 24 giờ</option>
+                            <option>Mỗi 48 giờ</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group flex-between">
+                        <label>Tự động đề xuất phân luồng</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="panel glass-panel p-4 form-section">
+                    <h3><i class="fa-solid fa-plug"></i> Tích hợp API</h3>
+                    
+                    <div class="form-group">
+                        <label>Camera Feed API Key</label>
+                        <input type="password" class="form-input" value="1234567890abcdef">
+                    </div>
+
+                    <div class="form-group flex-between">
+                        <label>Đồng bộ dữ liệu thời tiết (OpenWeather)</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox" checked>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+
+                    <div class="form-group flex-between">
+                        <label>Gửi SMS khẩn cấp</label>
+                        <label class="toggle-switch">
+                            <input type="checkbox">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top:20px; text-align:right;">
+                <button class="btn btn-primary" onclick="showToast('Đã lưu cấu hình', 'info')">Lưu thay đổi</button>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="js/roads-data.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
