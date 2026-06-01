@@ -631,3 +631,16 @@ input:checked + .slider:before { transform: translateX(20px); background-color: 
 /* Range Slider */
 .range-slider { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 4px; background: var(--surface-2); outline: none; }
 .range-slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); cursor: pointer; }
+
+/* ===================== WEATHER EFFECTS ===================== */
+.rain-overlay {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none; z-index: 400;
+    background: url('https://cdn.pixabay.com/photo/2016/09/20/09/01/rain-1682052_1280.png') repeat;
+    opacity: 0; transition: opacity 1s;
+    animation: rainFall 0.5s linear infinite;
+}
+.weather-bad .rain-overlay { opacity: 0.3; }
+.weather-bad .map-view { filter: grayscale(30%) sepia(20%) hue-rotate(180deg) brightness(0.8); }
+
+@keyframes rainFall { 0% { background-position: 0 0; } 100% { background-position: 20px 100vh; } }

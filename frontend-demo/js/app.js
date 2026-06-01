@@ -13,6 +13,7 @@ const STATE = {
   hotspotMarkers: [],
   carMarkers:   [],
   isSimulating: false,
+  isWeatherBad: false,
   simAnimIds:   [],
   chart:        null,         // Map side panel chart
   dashCharts:   {},           // Dashboard AI view charts
@@ -46,6 +47,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initFilters();
   initSearch();
   initTheme();
+  initWeatherBtn();
   initSimBtn();
   initHotspotBtn();
   initRecenterBtn();
@@ -164,9 +166,27 @@ function drawHotspots() {
       html: `<div class="hotspot-marker" title="${h.name}"><i class="fa-solid fa-fire"></i></div>`,
       iconSize: [28, 28], iconAnchor: [14, 14]
     });
+    
+    // Tạo nội dung popup camera giả lập
+    const popupContent = `
+      <div style="width:220px">
+        <b style="font-family:Inter;font-size:13px;display:flex;align-items:center;gap:5px;">
+          <i class="fa-solid fa-video" style="color:red"></i> CCTV: ${h.name}
+        </b>
+        <div style="margin-top:8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: #000; position: relative;">
+           <img src="https://media.giphy.com/media/xT9IgzoXuwA2yqKj8s/giphy.gif" style="width:100%; display:block; opacity: 0.85;">
+           <div style="position:absolute; top:4px; left:4px; color:#fff; font-size:9px; background:rgba(0,0,0,0.5); padding:2px 4px; border-radius:2px;">
+             REC <span style="color:red; font-size:10px;">●</span>
+           </div>
+        </div>
+        <span style="font-size:11px;color:#f87171;display:block;margin-top:6px;font-weight:600;">
+          ⚠️ Giao thông di chuyển rất chậm.
+        </span>
+      </div>`;
+
     const m = L.marker([h.lat, h.lng], { icon })
       .addTo(STATE.map)
-      .bindPopup(`<b style="font-family:Inter;font-size:13px">${h.name}</b><br><span style="font-size:11px;color:#f87171">⚠️ Điểm nóng ùn tắc</span>`);
+      .bindPopup(popupContent, { maxWidth: 250, className: 'cctv-popup' });
     STATE.hotspotMarkers.push(m);
   });
 }
@@ -558,6 +578,23 @@ function initTheme() {
   });
 }
 
+function initWeatherBtn() {
+  const btn = document.getElementById('weather-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', () => {
+    STATE.isWeatherBad = !STATE.isWeatherBad;
+    document.body.classList.toggle('weather-bad', STATE.isWeatherBad);
+    if (STATE.isWeatherBad) {
+      btn.style.color = '#38bdf8';
+      showToast('🌧️ Bão đổ bộ! Cảnh báo kẹt xe toàn thành phố.', 'severe');
+    } else {
+      btn.style.color = '';
+      showToast('🌤️ Thời tiết quang đãng.', 'info');
+    }
+    refreshData();
+  });
+}
+
 function showToast(msg, type = 'info') {
   const c = document.getElementById('toast-container');
   const div = document.createElement('div');
@@ -571,7 +608,7 @@ function refreshData() {
   const wasSimulating = STATE.isSimulating;
   if (wasSimulating) stopSimulation();
 
-  STATE.roads = buildLiveRoads();
+  STATE.roads = buildLiveRoads(STATE.isWeatherBad);
   drawAllRoads(); drawHotspots(); renderRoadList(); updateStats();
   if (STATE.chart) STATE.chart.data.datasets[0].data = genPredictionData();
   if (STATE.chart) STATE.chart.update('active');

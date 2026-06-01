@@ -306,7 +306,7 @@ const HANOI_ROADS = [
  * Tính trạng thái giao thông theo giờ (mô phỏng thực tế Hà Nội)
  * Giờ cao điểm sáng: 7h-9h | Giờ cao điểm chiều: 17h-19h
  */
-function computeRoadStatus(road) {
+function computeRoadStatus(road, isWeatherBad = false) {
   const now   = new Date();
   const hour  = now.getHours();
   const min   = now.getMinutes();
@@ -335,6 +335,11 @@ function computeRoadStatus(road) {
   // Cầu và vành đai dễ tắc hơn
   if (road.type === 'bridge') load *= 1.25;
   if (road.type === 'ring')   load *= 1.10;
+
+  // Thời tiết xấu cộng thêm tắc nghẽn đáng kể
+  if (isWeatherBad) {
+    load += 0.35;
+  }
 
   // Jitter ngẫu nhiên nhỏ (per road, stable giữa các lần gọi)
   const seed = (road.id * 9973 + hour * 113 + Math.floor(min / 5) * 7) % 1000;
@@ -376,9 +381,9 @@ function computeRoadStatus(road) {
 }
 
 /** Xây dựng mảng roads với live status */
-function buildLiveRoads() {
+function buildLiveRoads(isWeatherBad = false) {
   return HANOI_ROADS.map(r => ({
     ...r,
-    ...computeRoadStatus(r)
+    ...computeRoadStatus(r, isWeatherBad)
   }));
 }
