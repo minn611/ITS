@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
   initSimBtn();
   initHotspotBtn();
   initRecenterBtn();
+  initRoutingBtn();
   initCloseInfoBtn();
 
   // SPA Navigation
@@ -204,6 +205,164 @@ function initRecenterBtn() {
   document.getElementById('btn-recenter').addEventListener('click', () => {
     STATE.map.flyTo([21.0285, 105.8542], 13, { duration: 0.8 });
   });
+}
+
+/* ===================== AI ROUTING ===================== */
+
+// Dữ liệu tọa độ các điểm mốc (các điểm có thể chọn làm điểm đi/đến)
+const WAYPOINTS = [
+  { name: 'Đại lộ Thăng Long (đầu phía Tây)', lat: 21.0363, lng: 105.8420, id: 0 },
+  { name: 'Cầu Nhật Tân (Bắc)',               lat: 21.0860, lng: 105.8290, id: 1 },
+  { name: 'Hồ Hoàn Kiếm',                     lat: 21.0285, lng: 105.8522, id: 2 },
+  { name: 'Cầu Long Biên (Bắc)',               lat: 21.0512, lng: 105.8443, id: 3 },
+  { name: 'Mỹ Đình',                           lat: 21.0138, lng: 105.7830, id: 4 },
+  { name: 'Cầu Giấy',                          lat: 21.0368, lng: 105.8200, id: 5 },
+  { name: 'Vành đai 3 (Thanh Xuân)',            lat: 20.9872, lng: 105.8210, id: 6 },
+  { name: 'Ngã tư Vọng',                       lat: 21.0052, lng: 105.8480, id: 7 },
+  { name: 'Cầu Vĩnh Tuy (Nam)',                lat: 21.0062, lng: 105.8808, id: 8 },
+  { name: 'Giải Phóng (Hoàng Mai)',             lat: 20.9740, lng: 105.8440, id: 9 },
+];
+
+// Danh sách route polylines đang vẽ
+STATE.routeLines = [];
+STATE.routeMarkers = [];
+
+function initRoutingBtn() {
+  const btnToggle = document.getElementById('btn-routing');
+  const panel     = document.getElementById('routing-panel');
+  const btnClose  = document.getElementById('close-routing');
+  const btnFind   = document.getElementById('btn-find-route');
+
+  if (!btnToggle) return;
+
+  btnToggle.addEventListener('click', () => {
+    const isOpen = panel.style.display !== 'none';
+    panel.style.display = isOpen ? 'none' : 'block';
+    btnToggle.classList.toggle('active', !isOpen);
+    if (isOpen) clearRoute();
+  });
+
+  btnClose.addEventListener('click', () => {
+    panel.style.display = 'none';
+    btnToggle.classList.remove('active');
+    clearRoute();
+  });
+
+  btnFind.addEventListener('click', () => {
+    const fromVal = document.getElementById('route-from').value;
+    const toVal   = document.getElementById('route-to').value;
+    if (!fromVal || !toVal) {
+      showToast('Vui lòng chọn cả điểm xuất phát và điểm đến!', 'jam');
+      return;
+    }
+
+    const from = WAYPOINTS.find(w => w.id === parseInt(fromVal));
+    const to   = WAYPOINTS.find(w => w.id === parseInt(toVal));
+    if (from && to) findAIRoute(from, to);
+  });
+}
+
+function clearRoute() {
+  STATE.routeLines.forEach(l => STATE.map.removeLayer(l));
+  STATE.routeMarkers.forEach(m => STATE.map.removeLayer(m));
+  STATE.routeLines = [];
+  STATE.routeMarkers = [];
+  document.getElementById('route-result').style.display = 'none';
+}
+
+function findAIRoute(from, to) {
+  clearRoute();
+
+  // Mô phỏng AI chọn đường né tắc: 
+  // Thuật toán giả lập: đi qua các tuyến đường có status 'clear' hoặc 'slow'
+  const goodRoads = STATE.roads.filter(r => r.status === 'clear' || r.status === 'slow');
+  const badRoads  = STATE.roads.filter(r => r.status === 'jam' || r.status === 'severe');
+
+  // Tạo các điểm trung gian ngẫu nhiên dựa trên 1-2 tuyến đường tốt gần nhất
+  const midPoints = [];
+  if (goodRoads.length > 0) {
+    const mid = goodRoads[Math.floor(Math.random() * Math.min(3, goodRoads.length))];
+    midPoints.push(mid.coords[Math.floor(mid.coords.length / 2)]);
+  }
+
+  // Vẽ route thay thế (màu xanh - đường né tắc)
+  const routeCoords = [
+    [from.lat, from.lng],
+    ...midPoints,
+    [to.lat, to.lng]
+  ];
+
+  // Vẽ đường chính (AI đề xuất)
+  const glow = L.polyline(routeCoords, {
+    color: '#34d399', weight: 16, opacity: 0.15,
+    lineCap: 'round', lineJoin: 'round', dashArray: null
+  }).addTo(STATE.map);
+
+  const core = L.polyline(routeCoords, {
+    color: '#34d399', weight: 5, opacity: 1,
+    lineCap: 'round', lineJoin: 'round',
+    dashArray: '12, 6'
+  }).addTo(STATE.map);
+
+  STATE.routeLines.push(glow, core);
+
+  // Vẽ marker điểm đầu/cuối
+  const startIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:#34d399;border:3px solid white;box-shadow:0 0 8px #34d399;"></div>`,
+    iconSize: [14,14], iconAnchor: [7,7]
+  });
+  const endIcon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:#f87171;border:3px solid white;box-shadow:0 0 8px #f87171;"></div>`,
+    iconSize: [14,14], iconAnchor: [7,7]
+  });
+
+  STATE.routeMarkers.push(
+    L.marker([from.lat, from.lng], { icon: startIcon }).addTo(STATE.map),
+    L.marker([to.lat,   to.lng],   { icon: endIcon   }).addTo(STATE.map)
+  );
+
+  // Fit bounds
+  STATE.map.flyToBounds(L.latLngBounds(routeCoords), { padding: [50, 50], duration: 0.8 });
+
+  // Tính toán mô phỏng kết quả
+  const dist      = (Math.random() * 10 + 5).toFixed(1);
+  const timeNormal= Math.round(dist / 30 * 60 + badRoads.length * 2);
+  const timeAI    = Math.round(timeNormal * 0.65);
+  const saved     = timeNormal - timeAI;
+
+  // Hiển thị kết quả tuyến đường
+  const resultBox = document.getElementById('route-result');
+  resultBox.style.display = 'block';
+
+  const steps = [
+    { road: from.name, status: 'clear', note: 'Điểm xuất phát' },
+    ...(midPoints.length > 0 ? [{ road: goodRoads[0]?.name || 'Đường nội bộ', status: goodRoads[0]?.status || 'clear', note: 'AI chuyển hướng né tắc' }] : []),
+    { road: to.name, status: 'clear', note: 'Điểm đến' }
+  ];
+
+  resultBox.innerHTML = `
+    <div class="route-summary">
+      <div><div style="color:var(--text-3);font-size:10px">KHOẢNG CÁCH</div><strong>${dist} km</strong></div>
+      <div><div style="color:var(--text-3);font-size:10px">THỜI GIAN (AI)</div><strong style="color:var(--clear)">${timeAI} phút</strong></div>
+      <div><div style="color:var(--text-3);font-size:10px">TIẾT KIỆM</div><strong style="color:var(--accent)">-${saved} phút</strong></div>
+    </div>
+    ${steps.map(s => `
+      <div class="route-step">
+        <span class="route-step-dot" style="background:${COLOR[s.status]};box-shadow:0 0 4px ${COLOR[s.status]}"></span>
+        <div class="route-step-info">
+          <div class="route-step-name">${s.road}</div>
+          <div class="route-step-meta">${s.note} · ${STATUS_LABEL[s.status]}</div>
+        </div>
+      </div>
+    `).join('')}
+    <div style="margin-top:8px;font-size:11px;color:var(--text-3)">
+      🤖 AI tránh ${badRoads.length} tuyến đang ùn tắc
+    </div>
+  `;
+
+  showToast(`✅ Đã tìm được tuyến đường, tiết kiệm ${saved} phút!`, 'info');
 }
 
 /* ===================== ROAD INFO PANEL ===================== */

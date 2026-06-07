@@ -174,10 +174,50 @@
                                 <button class="map-btn active" id="btn-show-hotspots" title="Điểm nóng">
                                     <i class="fa-solid fa-fire"></i>
                                 </button>
+                                <button class="map-btn" id="btn-routing" title="Tìm đường thông minh">
+                                    <i class="fa-solid fa-diamond-turn-right"></i>
+                                </button>
                                 <button class="map-btn" id="btn-recenter" title="Về trung tâm">
                                     <i class="fa-solid fa-crosshairs"></i>
                                 </button>
                             </div>
+                        </div>
+
+                        <!-- AI Routing Panel -->
+                        <div id="routing-panel" class="routing-panel glass-panel" style="display:none">
+                            <div class="routing-header">
+                                <i class="fa-solid fa-route" style="color:var(--accent)"></i>
+                                <span>Tìm đường thông minh</span>
+                                <button id="close-routing" class="close-info"><i class="fa-solid fa-xmark"></i></button>
+                            </div>
+                            <div class="routing-inputs">
+                                <div class="routing-input-row">
+                                    <span class="route-dot start"></span>
+                                    <select class="form-input" id="route-from" style="flex:1">
+                                        <option value="">-- Chọn điểm xuất phát --</option>
+                                        <option value="0">Đại lộ Thăng Long (đầu phía Tây)</option>
+                                        <option value="1">Cầu Nhật Tân (Bắc)</option>
+                                        <option value="2">Hồ Hoàn Kiếm</option>
+                                        <option value="3">Cầu Long Biên (Bắc)</option>
+                                        <option value="4">Mỹ Đình</option>
+                                    </select>
+                                </div>
+                                <div class="routing-input-row">
+                                    <span class="route-dot end"></span>
+                                    <select class="form-input" id="route-to" style="flex:1">
+                                        <option value="">-- Chọn điểm đến --</option>
+                                        <option value="5">Cầu Giấy</option>
+                                        <option value="6">Vành đai 3 (Thanh Xuân)</option>
+                                        <option value="7">Ngã tư Vọng</option>
+                                        <option value="8">Cầu Vĩnh Tuy (Nam)</option>
+                                        <option value="9">Giải Phóng (Hoàng Mai)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="btn-find-route" style="width:100%;margin-top:8px">
+                                <i class="fa-solid fa-brain"></i> AI Tìm đường né tắc
+                            </button>
+                            <div id="route-result" style="display:none; margin-top:10px; font-size:12px; border-top:1px solid var(--border); padding-top:10px;"></div>
                         </div>
                         <div id="traffic-map" class="map-view"></div>
 
