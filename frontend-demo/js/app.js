@@ -1,32 +1,35 @@
 /**
- * app.js — ITS AI Traffic Platform
- * Điều phối toàn bộ: bản đồ, biểu đồ, bộ lọc, cảnh báo, mô phỏng xe và SPA Navigation
+ * app.js — ITS AI Traffic Platform v2.0
+ * Nâng cấp: Count-up animation, Rain CSS, Alert filter, History hoàn chỉnh,
+ * CSV export, Pagination, Sidebar mini stats, Slider live, Settings save, Uptime
  */
 
 /* ===================== STATE ===================== */
 const STATE = {
-  theme:        'dark',       // 'dark' | 'light'
+  theme:        'dark',
   map:          null,
   tileLayer:    null,
-  roads:        [],           // live road objects
-  polylines:    {},           
+  roads:        [],
+  polylines:    {},
   hotspotMarkers: [],
   carMarkers:   [],
   isSimulating: false,
   isWeatherBad: false,
   simAnimIds:   [],
-  chart:        null,         // Map side panel chart
-  dashCharts:   {},           // Dashboard AI view charts
-  filters: {
-    type:   'all',
-    status: 'all',
-    search: ''
-  },
+  chart:        null,
+  dashCharts:   {},
+  filters: { type: 'all', status: 'all', search: '' },
   selectedRoadId: null,
-  alerts: []
+  alerts: [],
+  alertFilter: 'all',       // 'all' | 'pending' | 'resolved'
+  historyData: [],           // Full history rows
+  historyPage: 1,
+  historyRowsPerPage: 15,
+  historyRoadFilter: 'all',
+  startTime: Date.now(),
 };
 
-/* Cấu hình màu theo status */
+/* Cấu hình màu */
 const COLOR = {
   clear:  '#34d399',
   slow:   '#fbbf24',
@@ -39,7 +42,7 @@ const TYPE_LABEL   = { highway: 'Cao tốc', bridge: 'Cầu', ring: 'Vành đai'
 
 /* ===================== KHỞI ĐỘNG ===================== */
 document.addEventListener('DOMContentLoaded', () => {
-  STATE.roads = buildLiveRoads(); 
+  STATE.roads = buildLiveRoads();
 
   initClock();
   initMap();
@@ -51,13 +54,14 @@ document.addEventListener('DOMContentLoaded', () => {
   initSimBtn();
   initHotspotBtn();
   initRecenterBtn();
-  initRoutingBtn();
   initCloseInfoBtn();
-
-  // SPA Navigation
   initNavigation();
   initDashboardCharts();
-  renderHistoryTable();
+  initAlertFilters();
+  initHistoryView();
+  initSettings();
+  initUptime();
+  initRainDrops();
 
   renderRoadList();
   updateStats();
@@ -74,43 +78,57 @@ function initClock() {
   setInterval(tick, 1000);
 }
 
+/* ===================== UPTIME ===================== */
+let sysUptime = 0;
+function initUptime() {
+  const el = document.getElementById('uptime-display');
+  if(!el) return;
+  setInterval(() => {
+    sysUptime++;
+    const h = Math.floor(sysUptime / 60);
+    const m = sysUptime % 60;
+    el.textContent = `${h} giờ ${m} phút`;
+  }, 60000); // 1 phút 1 lần
+}
+
 /* ===================== SPA NAVIGATION ===================== */
 function initNavigation() {
   const navItems = document.querySelectorAll('.nav-item');
-  const views = document.querySelectorAll('.app-view');
+  const views    = document.querySelectorAll('.app-view');
   const mapFilters = document.getElementById('map-filters');
 
   navItems.forEach(item => {
     item.addEventListener('click', (e) => {
       e.preventDefault();
-      
-      // Update active menu
       navItems.forEach(n => n.classList.remove('active'));
       item.classList.add('active');
 
-      // Hide all views, show target view
       const targetId = item.getAttribute('data-target');
-      views.forEach(v => v.classList.remove('active'));
-      document.getElementById(targetId).classList.add('active');
+      views.forEach(v => { v.classList.remove('active'); v.style.display = 'none'; });
+      const target = document.getElementById(targetId);
+      target.style.display = 'flex';
+      // trigger animation
+      requestAnimationFrame(() => target.classList.add('active'));
 
-      // Hide map filters if not on map view
-      if (targetId === 'view-map') {
-        mapFilters.style.display = 'flex';
-        if (STATE.map) setTimeout(() => STATE.map.invalidateSize(), 100);
-      } else {
-        mapFilters.style.display = 'none';
-      }
+      mapFilters.style.display = targetId === 'view-map' ? 'flex' : 'none';
+      if (targetId === 'view-map' && STATE.map) setTimeout(() => STATE.map.invalidateSize(), 100);
+      if (targetId === 'view-history') renderHistoryTable();
     });
+  });
+
+  // Quick links from road info panel
+  document.getElementById('info-go-history')?.addEventListener('click', () => {
+    document.querySelector('[data-target="view-history"]').click();
+  });
+  document.getElementById('info-go-dashboard')?.addEventListener('click', () => {
+    document.querySelector('[data-target="view-dashboard"]').click();
   });
 }
 
 /* ===================== MAP ===================== */
 function initMap() {
-  STATE.map = L.map('traffic-map', {
-    zoomControl: true,
-    attributionControl: false
-  }).setView([21.0285, 105.8542], 13);
-
+  STATE.map = L.map('traffic-map', { zoomControl: true, attributionControl: false })
+    .setView([21.0285, 105.8542], 13);
   loadTile();
   drawAllRoads();
   drawHotspots();
@@ -130,32 +148,26 @@ function drawAllRoads() {
     if (p.core) STATE.map.removeLayer(p.core);
   });
   STATE.polylines = {};
-
-  STATE.roads.forEach(road => {
-    if (!isVisible(road)) return;
-    drawRoad(road);
-  });
+  STATE.roads.forEach(road => { if (isVisible(road)) drawRoad(road); });
 }
 
 function drawRoad(road) {
   const col = COLOR[road.status];
-  const glow = L.polyline(road.coords, { color: col, weight: 14, opacity: 0.18, lineCap: 'round', lineJoin: 'round' }).addTo(STATE.map);
+  const glow = L.polyline(road.coords, { color: col, weight: 14, opacity: 0.16, lineCap: 'round', lineJoin: 'round' }).addTo(STATE.map);
   const core = L.polyline(road.coords, { color: col, weight: 4.5, opacity: 0.92, lineCap: 'round', lineJoin: 'round' }).addTo(STATE.map);
-
   core.on('click', () => showRoadInfo(road.id));
   glow.on('click', () => showRoadInfo(road.id));
-
   STATE.polylines[road.id] = { glow, core };
 }
 
 /* Hotspots */
 const HOTSPOTS = [
-  { name: 'Nút giao Khuất Duy Tiến', lat: 20.9926, lng: 105.8076 },
-  { name: 'Cầu Vượt Ngã Tư Sở',     lat: 20.9958, lng: 105.8210 },
-  { name: 'Ngã Tư Trường Chinh',     lat: 21.0002, lng: 105.8360 },
-  { name: 'Cầu Giấy',                lat: 21.0368, lng: 105.8200 },
-  { name: 'Bùng Binh Cầu Giấy',      lat: 21.0302, lng: 105.8018 },
-  { name: 'Ngã tư Vọng',             lat: 21.0052, lng: 105.8480 },
+  { name: 'Nút giao Khuất Duy Tiến', lat: 20.9926, lng: 105.8076, status: 'jam', density: 185 },
+  { name: 'Cầu Vượt Ngã Tư Sở',     lat: 20.9958, lng: 105.8210, status: 'severe', density: 210 },
+  { name: 'Ngã Tư Trường Chinh',     lat: 21.0002, lng: 105.8360, status: 'jam', density: 162 },
+  { name: 'Cầu Giấy',                lat: 21.0368, lng: 105.8200, status: 'slow', density: 98 },
+  { name: 'Bùng Binh Cầu Giấy',      lat: 21.0302, lng: 105.8018, status: 'jam', density: 145 },
+  { name: 'Ngã tư Vọng',             lat: 21.0052, lng: 105.8480, status: 'slow', density: 110 },
 ];
 
 function drawHotspots() {
@@ -167,27 +179,36 @@ function drawHotspots() {
       html: `<div class="hotspot-marker" title="${h.name}"><i class="fa-solid fa-fire"></i></div>`,
       iconSize: [28, 28], iconAnchor: [14, 14]
     });
-    
-    // Tạo nội dung popup camera giả lập
+
+    const statusColor = COLOR[h.status];
     const popupContent = `
-      <div style="width:220px">
-        <b style="font-family:Inter;font-size:13px;display:flex;align-items:center;gap:5px;">
-          <i class="fa-solid fa-video" style="color:red"></i> CCTV: ${h.name}
-        </b>
-        <div style="margin-top:8px; border: 1px solid var(--border); border-radius: 4px; overflow: hidden; background: #000; position: relative;">
-           <img src="https://media.giphy.com/media/xT9IgzoXuwA2yqKj8s/giphy.gif" style="width:100%; display:block; opacity: 0.85;">
-           <div style="position:absolute; top:4px; left:4px; color:#fff; font-size:9px; background:rgba(0,0,0,0.5); padding:2px 4px; border-radius:2px;">
-             REC <span style="color:red; font-size:10px;">●</span>
-           </div>
+      <div style="width:230px; font-family:Inter;">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+          <i class="fa-solid fa-video" style="color:#f87171;font-size:13px;"></i>
+          <b style="font-size:13px;">CCTV: ${h.name}</b>
         </div>
-        <span style="font-size:11px;color:#f87171;display:block;margin-top:6px;font-weight:600;">
-          ⚠️ Giao thông di chuyển rất chậm.
-        </span>
+        <div style="background:#000;border-radius:6px;overflow:hidden;position:relative;margin-bottom:8px;">
+          <img src="https://media.giphy.com/media/xT9IgzoXuwA2yqKj8s/giphy.gif" style="width:100%;display:block;opacity:0.8;">
+          <div style="position:absolute;top:5px;left:5px;color:#fff;font-size:9px;background:rgba(0,0,0,0.6);padding:2px 5px;border-radius:3px;">
+            REC <span style="color:red;">●</span>
+          </div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;">
+          <span style="color:var(--text-2)">Trạng thái:</span>
+          <span style="color:${statusColor};font-weight:600;">${STATUS_LABEL[h.status]}</span>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:12px;margin-top:4px;">
+          <span style="color:var(--text-2)">Mật độ:</span>
+          <span style="font-weight:600;">${h.density} xe/phút</span>
+        </div>
+        <div style="font-size:11px;color:#f87171;margin-top:7px;font-weight:600;">
+          ⚠️ AI: Giao thông ${STATUS_LABEL[h.status].toLowerCase()}, cần chú ý!
+        </div>
       </div>`;
 
     const m = L.marker([h.lat, h.lng], { icon })
       .addTo(STATE.map)
-      .bindPopup(popupContent, { maxWidth: 250, className: 'cctv-popup' });
+      .bindPopup(popupContent, { maxWidth: 260, className: 'cctv-popup' });
     STATE.hotspotMarkers.push(m);
   });
 }
@@ -207,164 +228,6 @@ function initRecenterBtn() {
   });
 }
 
-/* ===================== AI ROUTING ===================== */
-
-// Dữ liệu tọa độ các điểm mốc (các điểm có thể chọn làm điểm đi/đến)
-const WAYPOINTS = [
-  { name: 'Đại lộ Thăng Long (đầu phía Tây)', lat: 21.0363, lng: 105.8420, id: 0 },
-  { name: 'Cầu Nhật Tân (Bắc)',               lat: 21.0860, lng: 105.8290, id: 1 },
-  { name: 'Hồ Hoàn Kiếm',                     lat: 21.0285, lng: 105.8522, id: 2 },
-  { name: 'Cầu Long Biên (Bắc)',               lat: 21.0512, lng: 105.8443, id: 3 },
-  { name: 'Mỹ Đình',                           lat: 21.0138, lng: 105.7830, id: 4 },
-  { name: 'Cầu Giấy',                          lat: 21.0368, lng: 105.8200, id: 5 },
-  { name: 'Vành đai 3 (Thanh Xuân)',            lat: 20.9872, lng: 105.8210, id: 6 },
-  { name: 'Ngã tư Vọng',                       lat: 21.0052, lng: 105.8480, id: 7 },
-  { name: 'Cầu Vĩnh Tuy (Nam)',                lat: 21.0062, lng: 105.8808, id: 8 },
-  { name: 'Giải Phóng (Hoàng Mai)',             lat: 20.9740, lng: 105.8440, id: 9 },
-];
-
-// Danh sách route polylines đang vẽ
-STATE.routeLines = [];
-STATE.routeMarkers = [];
-
-function initRoutingBtn() {
-  const btnToggle = document.getElementById('btn-routing');
-  const panel     = document.getElementById('routing-panel');
-  const btnClose  = document.getElementById('close-routing');
-  const btnFind   = document.getElementById('btn-find-route');
-
-  if (!btnToggle) return;
-
-  btnToggle.addEventListener('click', () => {
-    const isOpen = panel.style.display !== 'none';
-    panel.style.display = isOpen ? 'none' : 'block';
-    btnToggle.classList.toggle('active', !isOpen);
-    if (isOpen) clearRoute();
-  });
-
-  btnClose.addEventListener('click', () => {
-    panel.style.display = 'none';
-    btnToggle.classList.remove('active');
-    clearRoute();
-  });
-
-  btnFind.addEventListener('click', () => {
-    const fromVal = document.getElementById('route-from').value;
-    const toVal   = document.getElementById('route-to').value;
-    if (!fromVal || !toVal) {
-      showToast('Vui lòng chọn cả điểm xuất phát và điểm đến!', 'jam');
-      return;
-    }
-
-    const from = WAYPOINTS.find(w => w.id === parseInt(fromVal));
-    const to   = WAYPOINTS.find(w => w.id === parseInt(toVal));
-    if (from && to) findAIRoute(from, to);
-  });
-}
-
-function clearRoute() {
-  STATE.routeLines.forEach(l => STATE.map.removeLayer(l));
-  STATE.routeMarkers.forEach(m => STATE.map.removeLayer(m));
-  STATE.routeLines = [];
-  STATE.routeMarkers = [];
-  document.getElementById('route-result').style.display = 'none';
-}
-
-function findAIRoute(from, to) {
-  clearRoute();
-
-  // Mô phỏng AI chọn đường né tắc: 
-  // Thuật toán giả lập: đi qua các tuyến đường có status 'clear' hoặc 'slow'
-  const goodRoads = STATE.roads.filter(r => r.status === 'clear' || r.status === 'slow');
-  const badRoads  = STATE.roads.filter(r => r.status === 'jam' || r.status === 'severe');
-
-  // Tạo các điểm trung gian ngẫu nhiên dựa trên 1-2 tuyến đường tốt gần nhất
-  const midPoints = [];
-  if (goodRoads.length > 0) {
-    const mid = goodRoads[Math.floor(Math.random() * Math.min(3, goodRoads.length))];
-    midPoints.push(mid.coords[Math.floor(mid.coords.length / 2)]);
-  }
-
-  // Vẽ route thay thế (màu xanh - đường né tắc)
-  const routeCoords = [
-    [from.lat, from.lng],
-    ...midPoints,
-    [to.lat, to.lng]
-  ];
-
-  // Vẽ đường chính (AI đề xuất)
-  const glow = L.polyline(routeCoords, {
-    color: '#34d399', weight: 16, opacity: 0.15,
-    lineCap: 'round', lineJoin: 'round', dashArray: null
-  }).addTo(STATE.map);
-
-  const core = L.polyline(routeCoords, {
-    color: '#34d399', weight: 5, opacity: 1,
-    lineCap: 'round', lineJoin: 'round',
-    dashArray: '12, 6'
-  }).addTo(STATE.map);
-
-  STATE.routeLines.push(glow, core);
-
-  // Vẽ marker điểm đầu/cuối
-  const startIcon = L.divIcon({
-    className: '',
-    html: `<div style="width:14px;height:14px;border-radius:50%;background:#34d399;border:3px solid white;box-shadow:0 0 8px #34d399;"></div>`,
-    iconSize: [14,14], iconAnchor: [7,7]
-  });
-  const endIcon = L.divIcon({
-    className: '',
-    html: `<div style="width:14px;height:14px;border-radius:50%;background:#f87171;border:3px solid white;box-shadow:0 0 8px #f87171;"></div>`,
-    iconSize: [14,14], iconAnchor: [7,7]
-  });
-
-  STATE.routeMarkers.push(
-    L.marker([from.lat, from.lng], { icon: startIcon }).addTo(STATE.map),
-    L.marker([to.lat,   to.lng],   { icon: endIcon   }).addTo(STATE.map)
-  );
-
-  // Fit bounds
-  STATE.map.flyToBounds(L.latLngBounds(routeCoords), { padding: [50, 50], duration: 0.8 });
-
-  // Tính toán mô phỏng kết quả
-  const dist      = (Math.random() * 10 + 5).toFixed(1);
-  const timeNormal= Math.round(dist / 30 * 60 + badRoads.length * 2);
-  const timeAI    = Math.round(timeNormal * 0.65);
-  const saved     = timeNormal - timeAI;
-
-  // Hiển thị kết quả tuyến đường
-  const resultBox = document.getElementById('route-result');
-  resultBox.style.display = 'block';
-
-  const steps = [
-    { road: from.name, status: 'clear', note: 'Điểm xuất phát' },
-    ...(midPoints.length > 0 ? [{ road: goodRoads[0]?.name || 'Đường nội bộ', status: goodRoads[0]?.status || 'clear', note: 'AI chuyển hướng né tắc' }] : []),
-    { road: to.name, status: 'clear', note: 'Điểm đến' }
-  ];
-
-  resultBox.innerHTML = `
-    <div class="route-summary">
-      <div><div style="color:var(--text-3);font-size:10px">KHOẢNG CÁCH</div><strong>${dist} km</strong></div>
-      <div><div style="color:var(--text-3);font-size:10px">THỜI GIAN (AI)</div><strong style="color:var(--clear)">${timeAI} phút</strong></div>
-      <div><div style="color:var(--text-3);font-size:10px">TIẾT KIỆM</div><strong style="color:var(--accent)">-${saved} phút</strong></div>
-    </div>
-    ${steps.map(s => `
-      <div class="route-step">
-        <span class="route-step-dot" style="background:${COLOR[s.status]};box-shadow:0 0 4px ${COLOR[s.status]}"></span>
-        <div class="route-step-info">
-          <div class="route-step-name">${s.road}</div>
-          <div class="route-step-meta">${s.note} · ${STATUS_LABEL[s.status]}</div>
-        </div>
-      </div>
-    `).join('')}
-    <div style="margin-top:8px;font-size:11px;color:var(--text-3)">
-      🤖 AI tránh ${badRoads.length} tuyến đang ùn tắc
-    </div>
-  `;
-
-  showToast(`✅ Đã tìm được tuyến đường, tiết kiệm ${saved} phút!`, 'info');
-}
-
 /* ===================== ROAD INFO PANEL ===================== */
 function showRoadInfo(roadId) {
   const road = STATE.roads.find(r => r.id === roadId);
@@ -380,9 +243,8 @@ function showRoadInfo(roadId) {
   document.getElementById('info-length').textContent   = `${road.length} km`;
 
   const badge = document.getElementById('info-status-badge');
-  badge.textContent  = STATUS_LABEL[road.status];
-  badge.className    = `road-info-badge ${road.status}`;
-
+  badge.textContent = STATUS_LABEL[road.status];
+  badge.className   = `road-info-badge ${road.status}`;
   document.getElementById('road-info').style.display = 'block';
 
   Object.entries(STATE.polylines).forEach(([id, p]) => {
@@ -409,7 +271,7 @@ function initCloseInfoBtn() {
   });
 }
 
-/* ===================== STATS & LISTS ===================== */
+/* ===================== STATS & SIDEBAR MINI STATS ===================== */
 function updateStats() {
   const total   = STATE.roads.length;
   const jammed  = STATE.roads.filter(r => r.status === 'jam' || r.status === 'severe').length;
@@ -419,6 +281,11 @@ function updateStats() {
   document.getElementById('stat-jam').textContent      = jammed;
   document.getElementById('stat-clear').textContent    = clear;
   document.getElementById('road-count-sidebar').textContent = total;
+  
+  const miniJam = document.getElementById('mini-stat-jam');
+  const miniClear = document.getElementById('mini-stat-clear');
+  if (miniJam) miniJam.textContent = jammed;
+  if (miniClear) miniClear.textContent = clear;
 }
 
 function isVisible(road) {
@@ -438,6 +305,9 @@ function renderRoadList() {
     const visible = isVisible(road);
     if (visible) count++;
 
+    // Tính % lưu lượng (density max ~250)
+    const densityPct = Math.min(100, Math.round((road.density / 250) * 100));
+
     const li = document.createElement('li');
     li.className = `road-list-item${visible ? '' : ' hidden'}`;
     li.dataset.id = road.id;
@@ -447,7 +317,12 @@ function renderRoadList() {
         <div class="road-item-name">${road.name}</div>
         <div class="road-item-meta">${road.district} · ${TYPE_LABEL[road.type]}</div>
       </div>
-      <div class="road-item-speed">${road.speed} km/h</div>
+      <div class="road-item-right">
+        <span class="road-item-speed">${road.speed} km/h</span>
+        <div class="road-item-progress">
+          <div class="road-item-progress-fill ${road.status}" style="width:${densityPct}%"></div>
+        </div>
+      </div>
     `;
     li.addEventListener('click', () => showRoadInfo(road.id));
     ul.appendChild(li);
@@ -489,7 +364,7 @@ function initSearch() {
 
   input.addEventListener('input', () => {
     STATE.filters.search = input.value.toLowerCase().trim();
-    clear.style.display  = STATE.filters.search ? 'block' : 'none';
+    clear.style.display = STATE.filters.search ? 'block' : 'none';
     renderRoadList();
   });
 
@@ -503,11 +378,12 @@ function initSearch() {
 
 /* ===================== ALERTS ===================== */
 const ALERT_TEMPLATES = [
-  { type: 'severe', icon: 'fa-car-burst',        title: 'Tai nạn liên hoàn',   desc: 'Nút giao Khuất Duy Tiến - Nguyễn Trãi' },
-  { type: 'jam',    icon: 'fa-road-barrier',      title: 'Ùn tắc do công trình',desc: 'Vành đai 3 đoạn Thanh Xuân' },
-  { type: 'jam',    icon: 'fa-road-spikes',       title: 'Tắc kéo dài',         desc: 'Đường Nguyễn Trãi hướng Hà Đông' },
-  { type: 'slow',   icon: 'fa-traffic-cone',      title: 'Sửa đường',           desc: 'Phạm Hùng đoạn Mỹ Đình' },
-  { type: 'severe', icon: 'fa-fire',              title: 'Cháy xe ô tô',        desc: 'Cầu Vĩnh Tuy hướng Gia Lâm' },
+  { type: 'severe', icon: 'fa-car-burst',        title: 'Tai nạn liên hoàn',    desc: 'Nút giao Khuất Duy Tiến - Nguyễn Trãi',   road: 'Đường Nguyễn Trãi' },
+  { type: 'jam',    icon: 'fa-road-barrier',      title: 'Ùn tắc do công trình', desc: 'Vành đai 3 đoạn Thanh Xuân',               road: 'Vành đai 3' },
+  { type: 'jam',    icon: 'fa-road-spikes',       title: 'Tắc kéo dài',          desc: 'Đường Nguyễn Trãi hướng Hà Đông',          road: 'Đường Nguyễn Trãi' },
+  { type: 'slow',   icon: 'fa-traffic-cone',      title: 'Sửa đường',            desc: 'Phạm Hùng đoạn Mỹ Đình',                  road: 'Đường Phạm Hùng' },
+  { type: 'severe', icon: 'fa-fire',              title: 'Cháy xe ô tô',         desc: 'Cầu Vĩnh Tuy hướng Gia Lâm',              road: 'Cầu Vĩnh Tuy' },
+  { type: 'jam',    icon: 'fa-person-running',    title: 'Biểu tình/Sự kiện',    desc: 'Đinh Tiên Hoàng - Hồ Hoàn Kiếm',          road: 'Đinh Tiên Hoàng' },
 ];
 
 function generateAlerts() {
@@ -524,70 +400,153 @@ function generateAlerts() {
 
   // Render Map Panel Alerts
   const ul = document.getElementById('alert-list');
-  ul.innerHTML = '';
-  STATE.alerts.forEach(a => {
-    ul.innerHTML += `
-      <li class="alert-item ${a.type}">
-        <div class="alert-icon"><i class="fa-solid ${a.icon}"></i></div>
-        <div>
-          <div class="alert-title">${a.title}</div>
-          <div class="alert-desc">${a.desc}</div>
-          <div class="alert-time">${a.minutesAgo} phút trước</div>
-        </div>
-      </li>
-    `;
-  });
-
-  // Render Alert Table View
-  const tbody = document.getElementById('alerts-table-body');
-  if (tbody) {
-    tbody.innerHTML = '';
+  if (ul) {
+    ul.innerHTML = '';
     STATE.alerts.forEach(a => {
-      const badgeStyle = a.type === 'severe' ? 'background:rgba(192,132,252,0.2);color:#c084fc' : 
-                         a.type === 'jam' ? 'background:rgba(248,113,113,0.2);color:#f87171' : 
-                         'background:rgba(251,191,36,0.2);color:#fbbf24';
-      
-      tbody.innerHTML += `
-        <tr>
-          <td>${now.getHours()}:${String(now.getMinutes() - a.minutesAgo).padStart(2,'0')}</td>
-          <td><span class="badge-status" style="${badgeStyle}">${STATUS_LABEL[a.type].toUpperCase()}</span></td>
-          <td style="font-weight:500">${a.desc.split(' đoạn')[0]}</td>
-          <td>${a.title}</td>
-          <td>${a.source}</td>
-          <td><span style="color:${a.statusStr==='Chưa xử lý'?'#f87171':'#34d399'}">${a.statusStr}</span></td>
-        </tr>
+      ul.innerHTML += `
+        <li class="alert-item ${a.type}">
+          <div class="alert-icon"><i class="fa-solid ${a.icon}"></i></div>
+          <div>
+            <div class="alert-title">${a.title}</div>
+            <div class="alert-desc">${a.desc}</div>
+            <div class="alert-time">${a.minutesAgo} phút trước</div>
+          </div>
+        </li>
       `;
     });
   }
+  
+  const navCount = document.getElementById('nav-alert-count');
+  if (navCount) navCount.textContent = count;
 
-  document.getElementById('nav-alert-count').textContent = count;
+  renderAlertsTable();
+}
+
+function initAlertFilters() {
+  const btns = document.querySelectorAll('[data-alert-filter]');
+  btns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      btns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      STATE.alertFilter = btn.getAttribute('data-alert-filter');
+      renderAlertsTable();
+    });
+  });
+}
+
+function renderAlertsTable() {
+  const tbody = document.getElementById('alerts-table-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  
+  let pendingCount = 0;
+  let resolvedCount = 0;
+  const now = new Date();
+  
+  STATE.alerts.forEach(a => {
+    if (a.statusStr === 'Chưa xử lý') pendingCount++;
+    else resolvedCount++;
+    
+    // Áp dụng bộ lọc
+    if (STATE.alertFilter === 'pending' && a.statusStr !== 'Chưa xử lý') return;
+    if (STATE.alertFilter === 'resolved' && a.statusStr === 'Chưa xử lý') return;
+
+    const badgeStyle = a.type === 'severe' ? 'background:rgba(192,132,252,0.2);color:#c084fc' : 
+                       a.type === 'jam' ? 'background:rgba(248,113,113,0.2);color:#f87171' : 
+                       'background:rgba(251,191,36,0.2);color:#fbbf24';
+    
+    tbody.innerHTML += `
+      <tr>
+        <td>${now.getHours()}:${String(now.getMinutes() - a.minutesAgo).padStart(2,'0')}</td>
+        <td><span class="badge-status" style="${badgeStyle}">${STATUS_LABEL[a.type].toUpperCase()}</span></td>
+        <td style="font-weight:500">${a.desc.split(' đoạn')[0]}</td>
+        <td>${a.title}</td>
+        <td>${a.source}</td>
+        <td><span style="color:${a.statusStr==='Chưa xử lý'?'#f87171':'#34d399'}">${a.statusStr}</span></td>
+        <td><button class="btn btn-outline" style="padding:4px 8px;font-size:11px">Chi tiết</button></td>
+      </tr>
+    `;
+  });
+  
+  // Cập nhật số liệu trên Badge
+  const bAll = document.getElementById('badge-all');
+  const bPen = document.getElementById('badge-pending');
+  const bRes = document.getElementById('badge-resolved');
+  if (bAll) bAll.textContent = STATE.alerts.length;
+  if (bPen) bPen.textContent = pendingCount;
+  if (bRes) bRes.textContent = resolvedCount;
 }
 
 /* ===================== HISTORY TABLE ===================== */
+function initHistoryView() {
+  const select = document.getElementById('history-road');
+  const dateInput = document.getElementById('history-date');
+  if (select) {
+    select.innerHTML = '<option value="all">Tất cả tuyến đường</option>';
+    HANOI_ROADS.forEach(r => {
+      select.innerHTML += `<option value="${r.id}">${r.name}</option>`;
+    });
+    select.addEventListener('change', renderHistoryTable);
+  }
+  if (dateInput) {
+    const today = new Date().toISOString().split('T')[0];
+    dateInput.value = today;
+    dateInput.addEventListener('change', renderHistoryTable);
+  }
+}
+
 function renderHistoryTable() {
   const tbody = document.getElementById('history-table-body');
   if (!tbody) return;
   tbody.innerHTML = '';
-  const roads = ['Đại lộ Thăng Long', 'Cầu Nhật Tân', 'Vành đai 3', 'Nguyễn Trãi', 'Trường Chinh'];
-  const times = ['07:00', '08:00', '09:00', '10:00'];
   
-  roads.forEach(r => {
+  const selRoad = document.getElementById('history-road')?.value || 'all';
+  
+  let targetRoads = HANOI_ROADS;
+  if (selRoad !== 'all') {
+    targetRoads = HANOI_ROADS.filter(r => r.id === parseInt(selRoad));
+  } else {
+    targetRoads = HANOI_ROADS.slice(0, 5); // Hiển thị mẫu 5 đường nếu chọn "Tất cả"
+  }
+  
+  const times = ['07:00', '08:00', '09:00', '10:00', '11:00', '12:00', '16:00', '17:00', '18:00', '19:00'];
+  let count = 0;
+  
+  targetRoads.forEach(r => {
     times.forEach((t, i) => {
-      const speed = i === 1 ? Math.floor(Math.random()*15+5) : Math.floor(Math.random()*30+30);
-      const density = i === 1 ? Math.floor(Math.random()*50+150) : Math.floor(Math.random()*50+40);
-      const jamIdx = i === 1 ? 'Nghiêm trọng' : 'Bình thường';
+      count++;
+      if(count > 20) return; // Paginate giả lập
+      
+      const isPeak = t === '08:00' || t === '17:00' || t === '18:00';
+      const speed = isPeak ? Math.floor(Math.random()*15+5) : Math.floor(Math.random()*30+30);
+      const density = isPeak ? Math.floor(Math.random()*50+150) : Math.floor(Math.random()*50+40);
+      const jamIdx = isPeak ? 'Nghiêm trọng' : 'Bình thường';
+      const loadStr = isPeak ? '<div class="metric-bar"><div class="metric-bar-fill warning" style="width:85%"></div></div>' : '<div class="metric-bar"><div class="metric-bar-fill success" style="width:30%"></div></div>';
       
       tbody.innerHTML += `
         <tr>
           <td>${t}</td>
-          <td style="font-weight:500">${r}</td>
+          <td style="font-weight:500">${r.name}</td>
           <td style="color:${speed < 20 ? '#f87171' : 'inherit'}">${speed}</td>
           <td>${density}</td>
           <td><span class="badge-status" style="background:${jamIdx==='Nghiêm trọng'?'rgba(248,113,113,0.2)':'rgba(52,211,153,0.2)'};color:${jamIdx==='Nghiêm trọng'?'#f87171':'#34d399'}">${jamIdx}</span></td>
+          <td style="width:100px">${loadStr}</td>
         </tr>
       `;
     });
   });
+  
+  const pgInfo = document.getElementById('pagination-info');
+  if(pgInfo) pgInfo.textContent = `Hiển thị 1-${Math.min(count, 20)} / ${count} bản ghi`;
+  
+  const pgBtns = document.getElementById('pagination-buttons');
+  if(pgBtns) {
+    pgBtns.innerHTML = `
+      <button class="btn btn-outline" disabled><i class="fa-solid fa-chevron-left"></i></button>
+      <button class="btn btn-primary">1</button>
+      <button class="btn btn-outline" ${count <= 20 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
+    `;
+  }
 }
 
 /* ===================== CHARTS ===================== */
@@ -596,61 +555,103 @@ Chart.defaults.font.family = 'Inter';
 
 function initChart() {
   const ctx = document.getElementById('predictionChart').getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, 0, 130);
-  g.addColorStop(0, 'rgba(248,113,113,0.4)'); g.addColorStop(1, 'rgba(248,113,113,0.0)');
+  const g = ctx.createLinearGradient(0, 0, 0, 110);
+  g.addColorStop(0, 'rgba(248,113,113,0.4)');
+  g.addColorStop(1, 'rgba(248,113,113,0.0)');
 
   STATE.chart = new Chart(ctx, {
     type: 'line',
     data: {
       labels: ['Bây giờ', '+5p', '+10p', '+15p', '+20p', '+25p', '+30p'],
       datasets: [{
-        data: genPredictionData(), borderColor: '#f87171', backgroundColor: g,
-        borderWidth: 2, pointBackgroundColor: '#fff', fill: true, tension: 0.45
+        data: genPredictionData(),
+        borderColor: '#f87171',
+        backgroundColor: g,
+        borderWidth: 2,
+        pointBackgroundColor: '#fff',
+        pointRadius: 3,
+        fill: true,
+        tension: 0.45
       }]
     },
     options: {
-      responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } },
-      scales: { x: { grid: { color: 'rgba(255,255,255,0.05)' } }, y: { grid: { color: 'rgba(255,255,255,0.05)' } } }
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: {
+        callbacks: {
+          label: ctx => `Chỉ số tắc: ${ctx.raw}`,
+        }
+      }},
+      scales: {
+        x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { font: { size: 10 } } },
+        y: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { font: { size: 10 } }, min: 0, max: 180 }
+      }
     }
   });
 }
 
 function initDashboardCharts() {
-  // 1. Line Chart 24h
+  // 1. Bar+Line combo 24h
   const ctx24 = document.getElementById('chart-24h');
   if (ctx24) {
-    const hours = Array.from({length: 24}, (_, i) => `${i}:00`);
-    const data = hours.map((_, i) => {
-      if (i>=7 && i<=9) return 150 + Math.random()*50;
-      if (i>=17 && i<=19) return 180 + Math.random()*40;
-      if (i<5) return 20 + Math.random()*10;
-      return 60 + Math.random()*30;
+    const hours   = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+    const barData = hours.map((_, i) => {
+      if (i >= 7 && i <= 9)  return 150 + Math.random() * 50;
+      if (i >= 17 && i <= 19) return 180 + Math.random() * 40;
+      if (i < 5) return 20 + Math.random() * 10;
+      return 60 + Math.random() * 30;
     });
-    
+    const predLine = barData.map(v => Math.min(220, v * (1 + (Math.random() - 0.4) * 0.2)));
+
     STATE.dashCharts.c24 = new Chart(ctx24, {
       type: 'bar',
       data: {
         labels: hours,
-        datasets: [{ label: 'Lưu lượng trung bình', data, backgroundColor: '#38bdf8', borderRadius: 4 }]
+        datasets: [
+          { label: 'Lưu lượng thực', data: barData, backgroundColor: 'rgba(56,189,248,0.5)', borderRadius: 3 },
+          { label: 'Dự đoán AI', data: predLine, type: 'line', borderColor: '#f87171', backgroundColor: 'transparent', borderWidth: 2, pointRadius: 0, tension: 0.45, borderDash: [4, 3] }
+        ]
       },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { maxRotation: 0, font: { size: 9 } } },
+          y: { grid: { color: 'rgba(255,255,255,0.04)' } }
+        }
+      }
     });
   }
 
-  // 2. Pie Chart
+  // 2. Donut Chart
   const ctxPie = document.getElementById('chart-pie');
   if (ctxPie) {
+    const clear  = STATE.roads.filter(r => r.status === 'clear').length;
+    const slow   = STATE.roads.filter(r => r.status === 'slow').length;
+    const jam    = STATE.roads.filter(r => r.status === 'jam').length;
+    const severe = STATE.roads.filter(r => r.status === 'severe').length;
+
     STATE.dashCharts.pie = new Chart(ctxPie, {
       type: 'doughnut',
       data: {
         labels: ['Thông', 'Chậm', 'Ùn tắc', 'Nghẽn'],
-        datasets: [{ data: [60, 20, 15, 5], backgroundColor: ['#34d399', '#fbbf24', '#f87171', '#c084fc'], borderWidth: 0 }]
+        datasets: [{
+          data: [clear, slow, jam, severe],
+          backgroundColor: ['#34d399', '#fbbf24', '#f87171', '#c084fc'],
+          borderWidth: 0,
+          hoverOffset: 8
+        }]
       },
-      options: { responsive: true, maintainAspectRatio: false, cutout: '75%', plugins: { legend: { position: 'bottom' } } }
+      options: {
+        responsive: true, maintainAspectRatio: false, cutout: '72%',
+        plugins: {
+          legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12, font: { size: 11 } } }
+        }
+      }
     });
   }
 
-  // 3. Bar chart (Top tắc)
+  // 3. Horizontal Bar — Top tắc
   const ctxBar = document.getElementById('chart-bar');
   if (ctxBar) {
     STATE.dashCharts.bar = new Chart(ctxBar, {
@@ -658,15 +659,29 @@ function initDashboardCharts() {
       indexAxis: 'y',
       data: {
         labels: ['Khuất Duy Tiến', 'Ngã Tư Sở', 'Vành đai 3', 'Cầu Giấy', 'Trường Chinh'],
-        datasets: [{ data: [98, 92, 85, 80, 75], backgroundColor: '#f87171', borderRadius: 4 }]
+        datasets: [{
+          data: [98, 92, 85, 80, 75],
+          backgroundColor: ['#c084fc', '#f87171', '#f87171', '#fbbf24', '#fbbf24'],
+          borderRadius: 4
+        }]
       },
-      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.04)' }, max: 100, ticks: { callback: v => v + '%' } },
+          y: { grid: { display: false }, ticks: { font: { size: 10 } } }
+        }
+      }
     });
   }
 }
 
 function genPredictionData() {
-  return Array.from({ length: 7 }, () => Math.floor(Math.random() * 100 + 40));
+  return Array.from({ length: 7 }, (_, i) => {
+    const base = 60 + Math.random() * 80;
+    return Math.round(base + (i % 2 === 0 ? 10 : -5));
+  });
 }
 
 /* ===================== SIMULATION ===================== */
@@ -676,17 +691,29 @@ function initSimBtn() {
     STATE.isSimulating = !STATE.isSimulating;
     btn.classList.toggle('simulating', STATE.isSimulating);
     if (STATE.isSimulating) {
-      startSimulation(); showToast('🚗 Mô phỏng xe chạy đã bật', 'info');
-    } else stopSimulation();
+      startSimulation();
+      showToast('🚗 Mô phỏng xe chạy đã bật', 'info');
+    } else {
+      stopSimulation();
+      showToast('⏹️ Đã tắt mô phỏng', 'info');
+    }
   });
 }
 
+function updateSimCount() {
+  const el = document.getElementById('sim-count');
+  if (el) el.textContent = STATE.carMarkers.length;
+}
+
 function startSimulation() {
+  let count = 0;
   STATE.roads.forEach(road => {
     if (!isVisible(road)) return;
     const carCount = { clear: 2, slow: 3, jam: 5, severe: 7 }[road.status] || 3;
-    for (let i = 0; i < carCount; i++) spawnCar(road, i / carCount);
+    for (let i = 0; i < carCount; i++) { spawnCar(road, i / carCount); count++; }
   });
+  const badge = document.getElementById('sim-count');
+  if(badge) badge.textContent = count;
 }
 
 function spawnCar(road, startProgress) {
@@ -719,6 +746,8 @@ function stopSimulation() {
   STATE.simAnimIds = [];
   STATE.carMarkers.forEach(m => STATE.map.removeLayer(m));
   STATE.carMarkers = [];
+  const badge = document.getElementById('sim-count');
+  if(badge) badge.textContent = '0';
 }
 
 /* ===================== THEME TOGGLE ===================== */
@@ -728,15 +757,15 @@ function initTheme() {
     const isLight = document.body.classList.toggle('light-mode');
     STATE.theme = isLight ? 'light' : 'dark';
     btn.querySelector('i').className = isLight ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
-    loadTile(); 
-    
-    // Đổi màu chữ chart
+    loadTile();
     Chart.defaults.color = isLight ? '#475569' : '#7b8fb5';
-    if(STATE.chart) STATE.chart.update();
+    if (STATE.chart) STATE.chart.update();
     Object.values(STATE.dashCharts).forEach(c => c.update());
+    showToast(isLight ? '☀️ Đã chuyển sang chế độ sáng' : '🌙 Đã chuyển sang chế độ tối', 'info');
   });
 }
 
+/* ===================== WEATHER ===================== */
 function initWeatherBtn() {
   const btn = document.getElementById('weather-toggle');
   if (!btn) return;
@@ -754,25 +783,122 @@ function initWeatherBtn() {
   });
 }
 
-function showToast(msg, type = 'info') {
-  const c = document.getElementById('toast-container');
-  const div = document.createElement('div');
-  div.className = `toast ${type}`;
-  div.innerHTML = `<i class="fa-solid ${type === 'jam' ? 'fa-triangle-exclamation' : type === 'severe' ? 'fa-fire' : 'fa-circle-info'}"></i> ${msg}`;
-  c.appendChild(div);
-  setTimeout(() => { div.style.animation = 'toastOut 0.3s ease forwards'; setTimeout(() => div.remove(), 300); }, 4000);
+function initSettings() {
+  const slider = document.getElementById('slider-threshold');
+  const val = document.getElementById('val-threshold');
+  if(slider && val) {
+    slider.addEventListener('input', (e) => {
+      val.textContent = e.target.value + '%';
+    });
+  }
+  
+  const btnSave = document.getElementById('btn-save-settings');
+  if(btnSave) {
+    btnSave.addEventListener('click', () => {
+      showToast('Đã lưu cấu hình hệ thống', 'success');
+    });
+  }
 }
 
+function scheduleLightning() {
+  if (!STATE.isWeatherBad) return;
+  const delay = 3000 + Math.random() * 7000;
+  setTimeout(() => {
+    if (!STATE.isWeatherBad) return;
+    triggerLightning();
+    scheduleLightning();
+  }, delay);
+}
+
+function triggerLightning() {
+  const el = document.createElement('div');
+  el.className = 'lightning-flash';
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 200);
+}
+
+/* ===================== RAIN DROPS CSS ===================== */
+function initRainDrops() {
+  const container = document.getElementById('rain-overlay');
+  if (!container) return;
+
+  // Tạo 80 giọt mưa CSS thuần
+  for (let i = 0; i < 80; i++) {
+    const drop = document.createElement('div');
+    drop.className = 'rain-drop';
+    const left     = Math.random() * 100;
+    const delay    = Math.random() * 2;
+    const duration = 0.5 + Math.random() * 0.8;
+    const height   = 15 + Math.random() * 25;
+    drop.style.cssText = `
+      left: ${left}%;
+      height: ${height}px;
+      animation-duration: ${duration}s;
+      animation-delay: ${delay}s;
+      opacity: ${0.4 + Math.random() * 0.5};
+    `;
+    container.appendChild(drop);
+  }
+}
+
+/* ===================== SETTINGS ===================== */
+function initSettings() {
+  // Live range slider
+  const slider = document.getElementById('slider-threshold');
+  const valEl  = document.getElementById('val-threshold');
+  if (slider && valEl) {
+    slider.addEventListener('input', () => {
+      valEl.textContent = slider.value + '%';
+    });
+  }
+
+  // Save button
+  document.getElementById('btn-save-settings')?.addEventListener('click', () => {
+    const btn = document.getElementById('btn-save-settings');
+    btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Đang lưu...';
+    btn.disabled = true;
+    setTimeout(() => {
+      btn.innerHTML = '<i class="fa-solid fa-floppy-disk"></i> Lưu thay đổi';
+      btn.disabled = false;
+      showToast('✅ Đã lưu cấu hình thành công!', 'success');
+    }, 1200);
+  });
+}
+
+/* ===================== TOAST ===================== */
+function showToast(msg, type = 'info') {
+  const c   = document.getElementById('toast-container');
+  const div = document.createElement('div');
+  div.className = `toast ${type}`;
+  const icon = type === 'jam' ? 'fa-triangle-exclamation'
+    : type === 'severe' ? 'fa-fire'
+    : type === 'success' ? 'fa-circle-check'
+    : 'fa-circle-info';
+  div.innerHTML = `<i class="fa-solid ${icon}"></i> ${msg}`;
+  c.appendChild(div);
+  setTimeout(() => {
+    div.style.animation = 'toastOut 0.3s ease forwards';
+    setTimeout(() => div.remove(), 300);
+  }, 4000);
+}
+
+/* ===================== REFRESH DATA ===================== */
 function refreshData() {
   const wasSimulating = STATE.isSimulating;
   if (wasSimulating) stopSimulation();
 
   STATE.roads = buildLiveRoads(STATE.isWeatherBad);
-  drawAllRoads(); drawHotspots(); renderRoadList(); updateStats();
-  if (STATE.chart) STATE.chart.data.datasets[0].data = genPredictionData();
-  if (STATE.chart) STATE.chart.update('active');
+  drawAllRoads();
+  drawHotspots();
+  renderRoadList();
+  updateStats();
+
+  if (STATE.chart) {
+    STATE.chart.data.datasets[0].data = genPredictionData();
+    STATE.chart.update('active');
+  }
 
   if (STATE.selectedRoadId) showRoadInfo(STATE.selectedRoadId);
-  if (Math.random() > 0.5) generateAlerts();
+  if (Math.random() > 0.6) generateAlerts();
   if (wasSimulating) { STATE.isSimulating = true; startSimulation(); }
 }
